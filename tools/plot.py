@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, FFMpegWriter
 from tqdm import tqdm
 
+
 def set_equal_aspect_3d(ax, x, y, z):
     extents = np.array([x.max()-x.min(), y.max()-y.min(), z.max()-z.min()])
     max_extent = extents.max()
@@ -11,6 +12,7 @@ def set_equal_aspect_3d(ax, x, y, z):
     ax.set_ylim(centers[1] - max_extent/2, centers[1] + max_extent/2)
     ax.set_zlim(centers[2] - max_extent/2, centers[2] + max_extent/2)
     ax.set_box_aspect([1,1,1])
+
 
 def plot(trajectories, label):
     x, y, z = trajectories.x, trajectories.y, trajectories.z
@@ -24,16 +26,20 @@ def plot(trajectories, label):
     ax.set_title('Trajectory Plot')
     ax.legend()
     plt.show()
+    plt.close(fig)
 
 
-def save_trajectory_video(trajectories, filename='test', fps=20):
+def save_trajectory_video(trajectories, filename='test', fps=20, step=1, ):
     x, y, z, t = trajectories.x, trajectories.y, trajectories.z, trajectories.time
+
+    x, y, z, t = x[::step], y[::step], z[::step], t[::step]
+
     dist = np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2 + np.diff(z) ** 2)
     dt = np.diff(t)
     speeds = np.concatenate(([0], dist / dt))
     max_speeds = np.maximum.accumulate(speeds)
 
-    fig = plt.figure(figsize=(10, 8))
+    fig = plt.figure(figsize=(10, 8), dpi=200)
     ax = fig.add_subplot(111, projection='3d')
     line, = ax.plot([], [], [], 'b-', lw=2)
     point, = ax.plot([], [], [], 'ro')
@@ -44,6 +50,10 @@ def save_trajectory_video(trajectories, filename='test', fps=20):
     n_points = len(x)
     pause_frames = fps
     total_frames = n_points + pause_frames
+
+    def frame_gen():
+        for i in range(total_frames):
+            yield i
 
     def init():
         set_equal_aspect_3d(ax, x, y, z)
@@ -68,18 +78,24 @@ def save_trajectory_video(trajectories, filename='test', fps=20):
 
         return line, point, stats_text
 
-    ani = FuncAnimation(fig, update, frames=total_frames, init_func=init, blit=False)
+    ani = FuncAnimation(fig, update, frames=frame_gen(), init_func=init, blit=False)
     pbar = tqdm(total=total_frames, desc="영상 생성 중")
 
     try:
-        writer = FFMpegWriter(fps=fps)
-        ani.save(f"{filename}.mp4", writer=writer, progress_callback=lambda i, n: pbar.update(1))
-    except Exception:
+        writer = FFMpegWriter(fps=fps, bitrate=1800)
+        ani.save(f"{filename}.mp4", writer=writer,
+                 progress_callback=lambda i, n: pbar.update(1))
+    except Exception as e:
+        print("FFMPEG ERROR:", e)
         pbar.close()
         pbar = tqdm(total=total_frames, desc="GIF 생성 중")
-        ani.save(f'{filename}.gif', writer='pillow', fps=fps, progress_callback=lambda i, n: pbar.update(1))
+        ani.save(f'{filename}.gif', writer='pillow', fps=fps,
+                 progress_callback=lambda i, n: pbar.update(1))
     finally:
         pbar.close()
+
+    plt.close(fig)
+
 
 def plot_multiple(trajectories, labels, colors):
     xs = [i.x for i in trajectories]
@@ -103,14 +119,16 @@ def plot_multiple(trajectories, labels, colors):
     ax.legend()
     plt.show()
 
+    plt.close(fig)
 
-def save_trajectory_video_multiple(trajectories, labels, colors, filename='test', fps=20):
-    xs = [i.x for i in trajectories]
-    ys = [i.y for i in trajectories]
-    zs = [i.z for i in trajectories]
-    t = trajectories[0].time
 
-    fig = plt.figure(figsize=(10, 8))
+def save_trajectory_video_multiple(trajectories, labels, colors, filename='test', fps=20, step=1, ):
+    xs = [i.x[::step] for i in trajectories]
+    ys = [i.y[::step] for i in trajectories]
+    zs = [i.z[::step] for i in trajectories]
+    t = trajectories[0].time[::step]
+
+    fig = plt.figure(figsize=(10, 8), dpi=200)
     ax = fig.add_subplot(111, projection='3d')
 
     lines = []
@@ -130,7 +148,14 @@ def save_trajectory_video_multiple(trajectories, labels, colors, filename='test'
     all_y = np.concatenate(ys)
     all_z = np.concatenate(zs)
 
+    stats_text = ax.text2D(0.05, 0.95, "", transform=ax.transAxes, fontsize=12,
+                           bbox=dict(facecolor='white', alpha=0.7))
+
     ax.legend()
+
+    def frame_gen():
+        for i in range(total_frames):
+            yield i
 
     def init():
         set_equal_aspect_3d(ax, all_x, all_y, all_z)
@@ -141,22 +166,30 @@ def save_trajectory_video_multiple(trajectories, labels, colors, filename='test'
 
     def update(i):
         idx = min(i, n_points - 1)
+
         for j in range(len(xs)):
             lines[j].set_data(xs[j][:idx + 1], ys[j][:idx + 1])
             lines[j].set_3d_properties(zs[j][:idx + 1])
             points[j].set_data([xs[j][idx]], [ys[j][idx]])
             points[j].set_3d_properties([zs[j][idx]])
+
+        stats_text.set_text(f"Time : {t[idx]:.2f}s\n(T+{t[idx]-t[0]:.2f}s)")
         return lines + points
 
-    ani = FuncAnimation(fig, update, frames=total_frames, init_func=init, blit=False)
+    ani = FuncAnimation(fig, update, frames=frame_gen(), init_func=init, blit=False)
     pbar = tqdm(total=total_frames, desc="영상 생성 중")
 
     try:
-        writer = FFMpegWriter(fps=fps)
-        ani.save(f"{filename}.mp4", writer=writer, progress_callback=lambda i, n: pbar.update(1))
-    except Exception:
+        writer = FFMpegWriter(fps=fps, bitrate=1800)
+        ani.save(f"{filename}.mp4", writer=writer,
+                 progress_callback=lambda i, n: pbar.update(1))
+    except Exception as e:
+        print("FFMPEG ERROR:", e)
         pbar.close()
         pbar = tqdm(total=total_frames, desc="GIF 생성 중")
-        ani.save(f'{filename}.gif', writer='pillow', fps=fps, progress_callback=lambda i, n: pbar.update(1))
+        ani.save(f'{filename}.gif', writer='pillow', fps=fps,
+                 progress_callback=lambda i, n: pbar.update(1))
     finally:
         pbar.close()
+
+    plt.close(fig)
